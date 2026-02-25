@@ -2,6 +2,7 @@ openai
 pyyaml
 sqlite-utils
 python-dotenv
+requests
 pandas
 matplotlib
 seaborn
