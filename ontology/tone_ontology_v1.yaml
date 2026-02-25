@@ -1,0 +1,105 @@
+# Tone Ontology v1 — Earnings-Call Q&A Analysis
+# ===============================================
+# Used by the analyst-agent committee to classify the tone of
+# analyst questions during earnings-call Q&A sessions.
+
+version: 1
+
+categories:
+  PraiseSupport:
+    description: >
+      The analyst's question conveys approval, optimism, or endorsement of
+      management's strategy, execution, or reported results.  The tone
+      signals confidence in the company's trajectory or explicitly
+      commends a specific achievement.
+    lexical_cues:
+      - "impressive execution"
+      - "strong results"
+      - "well ahead of expectations"
+      - "great to see the momentum"
+      - "encouraging trajectory"
+      - "solid beat"
+      - "nicely positioned"
+      - "remarkable improvement"
+      - "pleasantly surprised"
+      - "ahead of plan"
+      - "clean beat-and-raise"
+      - "firing on all cylinders"
+    question_intent_patterns:
+      - "affirming confidence in forward guidance"
+      - "seeking confirmation of positive momentum"
+      - "exploring potential upside beyond consensus"
+      - "validating sustainability of margin expansion"
+      - "praising capital allocation decisions"
+    ignore_phrases:
+      - "thanks for taking my question"
+      - "congrats on the quarter"
+      - "nice quarter"
+      - "appreciate the color"
+      - "thanks for the detail"
+      - "great, thank you"
+
+  SkepticismDisappointment:
+    description: >
+      The analyst's question signals doubt, concern, or dissatisfaction
+      with reported results, forward guidance, or management credibility.
+      The tone may probe execution risks, question the durability of
+      trends, or express disappointment relative to expectations.
+    lexical_cues:
+      - "falling short"
+      - "disappointed by"
+      - "missed expectations"
+      - "concerned about the trajectory"
+      - "sustainability is questionable"
+      - "weaker than expected"
+      - "deteriorating"
+      - "deceleration"
+      - "why the miss"
+      - "downside risk"
+      - "losing share"
+      - "lack of visibility"
+      - "pushback from customers"
+      - "margin compression"
+    question_intent_patterns:
+      - "probing guidance sustainability"
+      - "questioning management credibility after a miss"
+      - "challenging the durability of reported growth"
+      - "exploring downside scenarios"
+      - "pressing on competitive threats or share loss"
+      - "highlighting disconnect between results and outlook"
+    ignore_phrases:
+      - "thanks for taking my question"
+      - "congrats on the quarter"
+      - "nice quarter"
+      - "appreciate the color"
+      - "thanks for the detail"
+
+  Neutral:
+    description: >
+      The analyst's question is primarily information-seeking with
+      minimal emotional valence.  The tone is factual and procedural,
+      aimed at clarifying numbers, modeling assumptions, or segment-level
+      detail without signaling approval or disapproval.
+    lexical_cues:
+      - "can you quantify"
+      - "what's the breakdown"
+      - "how should we think about"
+      - "walk us through"
+      - "any update on"
+      - "what's embedded in guidance"
+      - "can you bridge"
+      - "could you parse"
+      - "help us model"
+      - "what are the puts and takes"
+    question_intent_patterns:
+      - "clarifying modeling assumptions"
+      - "requesting segment-level detail"
+      - "asking for a bridge between reported and adjusted figures"
+      - "seeking timing or cadence of expected events"
+      - "requesting definition of a metric or methodology"
+    ignore_phrases:
+      - "thanks for taking my question"
+      - "congrats on the quarter"
+      - "nice quarter"
+      - "appreciate the color"
+      - "thanks for the detail"
