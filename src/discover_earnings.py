@@ -1,15 +1,13 @@
 """Earnings discovery and transcript fetching layer.
 
-Pulls the last week's NYSE / NASDAQ earnings events from the Financial
-Modeling Prep (FMP) earnings-calendar API, fetches each company's call
-transcript from the API Ninjas earnings-transcript endpoint, adapts the
-raw response into the local segment schema, and writes the result to
-``data/transcripts/{ticker}/{call_date}.json`` so that the existing
-``run_local.py`` pipeline can process it.
+Pulls the last week's earnings events from the API Ninjas earnings-calendar
+endpoint, fetches each company's call transcript from the API Ninjas
+earnings-transcript endpoint, adapts the raw response into the local segment
+schema, and writes the result to ``data/transcripts/{ticker}/{call_date}.json``
+so that the existing ``run_local.py`` pipeline can process it.
 
 Required environment variables::
 
-    FMP_API_KEY      — Financial Modeling Prep API key
     NINJAS_API_KEY   — API Ninjas API key
 
 Usage::
@@ -20,7 +18,6 @@ Usage::
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from datetime import date, timedelta
@@ -35,20 +32,12 @@ import requests
 
 DATA_DIR = Path("data/transcripts")
 
-_FMP_CALENDAR_URL = (
-    "https://financialmodelingprep.com/api/v3/earning_calendar"
+_NINJAS_CALENDAR_URL = (
+    "https://api.api-ninjas.com/v1/earningscalendar"
 )
-_FMP_PROFILE_URL = (
-    "https://financialmodelingprep.com/api/v3/profile"
-)
-
 _NINJAS_TRANSCRIPT_URL = (
     "https://api.api-ninjas.com/v1/earningstranscript"
 )
-
-# Exchanges we care about.  FMP profile returns ``exchangeShortName``
-# values like "NASDAQ", "NYSE", "AMEX", etc.
-_TARGET_EXCHANGES = {"NYSE", "NASDAQ", "AMEX"}
 
 # ---------------------------------------------------------------------------
 # Date helpers
@@ -91,99 +80,61 @@ def _date_to_year_quarter(call_date: str) -> Tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# FMP: earnings calendar + exchange filter
+# API Ninjas: earnings calendar
 # ---------------------------------------------------------------------------
 
 
 def fetch_earnings_calendar(from_date: str, to_date: str) -> List[Dict]:
-    """Call the FMP earnings-calendar API and return the JSON list.
+    """Fetch earnings events between *from_date* and *to_date* (inclusive).
+
+    Uses the API Ninjas ``/earningscalendar`` endpoint, which accepts a
+    single ``date`` parameter.  We iterate day-by-day over the range and
+    combine the results into one list.
 
     Parameters
     ----------
     from_date, to_date : str
-        ISO-8601 date strings defining the query window (max 3 months).
+        ISO-8601 date strings (e.g. ``"2025-02-01"``).
 
     Returns
     -------
     list[dict]
-        Each dict contains at least ``symbol`` and ``date``.
+        Each dict contains at least ``ticker`` and ``date``.
 
     Raises
     ------
     EnvironmentError
-        If ``FMP_API_KEY`` is not set.
-    RuntimeError
-        If the HTTP request fails.
+        If ``NINJAS_API_KEY`` is not set.
+    requests.HTTPError
+        If any daily request fails.
     """
-    api_key = os.environ.get("FMP_API_KEY")
+    api_key = os.environ.get("NINJAS_API_KEY")
     if not api_key:
         raise EnvironmentError(
-            "FMP_API_KEY is not set. Export it or add it to your .env file."
+            "NINJAS_API_KEY is not set. Export it or add it to your .env file."
         )
 
-    resp = requests.get(
-        _FMP_CALENDAR_URL,
-        params={"from": from_date, "to": to_date, "apikey": api_key},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    start = date.fromisoformat(from_date)
+    end = date.fromisoformat(to_date)
+    events: List[Dict] = []
+    cur = start
 
-    if isinstance(data, dict) and "error" in data:
-        raise RuntimeError(f"FMP API error: {data['error']}")
+    while cur <= end:
+        resp = requests.get(
+            _NINJAS_CALENDAR_URL,
+            params={"date": cur.isoformat()},
+            headers={"X-Api-Key": api_key},
+            timeout=15,
+        )
+        resp.raise_for_status()
 
-    return data if isinstance(data, list) else []
+        day_events = resp.json()
+        if isinstance(day_events, list):
+            events.extend(day_events)
 
+        cur += timedelta(days=1)
 
-def _filter_by_exchange(
-    events: List[Dict],
-    fmp_api_key: str,
-) -> List[Dict]:
-    """Keep only events whose ticker trades on a target exchange.
-
-    Uses the FMP ``/profile`` endpoint in batches (up to 50 tickers per
-    request) to look up ``exchangeShortName`` and discard any symbol
-    that is not on NYSE, NASDAQ, or AMEX.
-    """
-    if not events:
-        return []
-
-    symbols = list({e["symbol"] for e in events if e.get("symbol")})
-    exchange_map: Dict[str, str] = {}
-
-    # FMP profile supports comma-separated tickers, up to ~50 at a time.
-    batch_size = 50
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i : i + batch_size]
-        joined = ",".join(batch)
-        try:
-            resp = requests.get(
-                f"{_FMP_PROFILE_URL}/{joined}",
-                params={"apikey": fmp_api_key},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            for profile in resp.json():
-                sym = profile.get("symbol", "")
-                exch = profile.get("exchangeShortName", "")
-                exchange_map[sym] = exch
-        except requests.RequestException:
-            # If the profile lookup fails for a batch we keep all of
-            # them rather than silently dropping companies.
-            for sym in batch:
-                exchange_map[sym] = "UNKNOWN"
-
-    filtered = [
-        e
-        for e in events
-        if exchange_map.get(e.get("symbol", ""), "UNKNOWN") in _TARGET_EXCHANGES
-    ]
-
-    print(
-        f"  Exchange filter: {len(events)} events → "
-        f"{len(filtered)} on {', '.join(sorted(_TARGET_EXCHANGES))}"
-    )
-    return filtered
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -411,8 +362,8 @@ def main() -> None:
     Steps:
 
     1. Compute the last-7-day date window.
-    2. Fetch the FMP earnings calendar for that window.
-    3. Filter to NYSE / NASDAQ / AMEX via the FMP profile endpoint.
+    2. Fetch the API Ninjas earnings calendar for that window.
+    3. De-duplicate by ticker (keep earliest date).
     4. For each event, fetch the transcript, adapt it, and save it.
     5. Print a one-line summary per file.
     """
@@ -425,38 +376,30 @@ def main() -> None:
 
     # -- Step 1: earnings calendar --
     events = fetch_earnings_calendar(from_date, to_date)
-    print(f"  FMP returned {len(events)} earnings event(s).")
+    print(f"  API Ninjas returned {len(events)} earnings event(s).")
 
     if not events:
         print("  Nothing to process.")
         return
 
-    # -- Step 2: exchange filter --
-    fmp_key = os.environ.get("FMP_API_KEY", "")
-    events = _filter_by_exchange(events, fmp_key)
-
-    if not events:
-        print("  No NYSE/NASDAQ events in this window.")
-        return
-
-    # -- Step 3: de-duplicate by symbol (keep earliest date) --
+    # -- Step 2: de-duplicate by ticker (keep earliest date) --
     seen: dict[str, str] = {}
     for ev in events:
-        sym = ev.get("symbol", "")
+        sym = ev.get("ticker", "")
         dt = ev.get("date", "")
         if sym and (sym not in seen or dt < seen[sym]):
             seen[sym] = dt
 
-    unique_events = [{"symbol": s, "date": d} for s, d in sorted(seen.items())]
+    unique_events = [{"ticker": s, "date": d} for s, d in sorted(seen.items())]
     print(f"  Unique tickers to fetch: {len(unique_events)}")
 
-    # -- Step 4: fetch, adapt, save --
+    # -- Step 3: fetch, adapt, save --
     saved = 0
     skipped = 0
     failed = 0
 
     for ev in unique_events:
-        raw_sym = ev["symbol"]
+        raw_sym = ev["ticker"]
         call_date = ev["date"]
         ticker = _normalize_symbol(raw_sym)
 
