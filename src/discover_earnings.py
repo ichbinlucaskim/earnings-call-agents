@@ -39,6 +39,10 @@ _NINJAS_TRANSCRIPT_URL = (
     "https://api.api-ninjas.com/v1/earningstranscript"
 )
 
+# US exchanges to keep.  API Ninjas may return exchange names in several
+# forms (e.g. "NASDAQ", "NASDAQGS", "NASDAQGM", "NASDAQCM").
+TARGET_EXCHANGES = {"NYSE", "NASDAQ", "NASDAQGS", "NASDAQGM", "NASDAQCM"}
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
@@ -135,6 +139,31 @@ def fetch_earnings_calendar(from_date: str, to_date: str) -> List[Dict]:
         cur += timedelta(days=1)
 
     return events
+
+
+def filter_us_equities(events: List[Dict]) -> List[Dict]:
+    """Filter earnings events to US-listed equities on NYSE / NASDAQ.
+
+    Checks ``ev["exchange"]`` (falling back to ``ev["market"]``) against
+    :data:`TARGET_EXCHANGES`.  Events without a recognisable exchange
+    field are dropped.
+
+    Parameters
+    ----------
+    events : list[dict]
+        Raw events from :func:`fetch_earnings_calendar`.
+
+    Returns
+    -------
+    list[dict]
+        Only those events whose exchange is in :data:`TARGET_EXCHANGES`.
+    """
+    filtered: List[Dict] = []
+    for ev in events:
+        exchange = (ev.get("exchange") or ev.get("market") or "").upper()
+        if exchange in TARGET_EXCHANGES:
+            filtered.append(ev)
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -363,9 +392,10 @@ def main() -> None:
 
     1. Compute the last-7-day date window.
     2. Fetch the API Ninjas earnings calendar for that window.
-    3. De-duplicate by ticker (keep earliest date).
-    4. For each event, fetch the transcript, adapt it, and save it.
-    5. Print a one-line summary per file.
+    3. Filter to US exchanges (NYSE / NASDAQ).
+    4. De-duplicate by ticker (keep earliest date).
+    5. For each event, fetch the transcript, adapt it, and save it.
+    6. Print a one-line summary per file.
     """
     from dotenv import load_dotenv
 
@@ -382,7 +412,15 @@ def main() -> None:
         print("  Nothing to process.")
         return
 
-    # -- Step 2: de-duplicate by ticker (keep earliest date) --
+    # -- Step 2: filter to US exchanges --
+    events = filter_us_equities(events)
+    print(f"  US-listed events after exchange filter: {len(events)}")
+
+    if not events:
+        print("  No US-listed events in this window.")
+        return
+
+    # -- Step 3: de-duplicate by ticker (keep earliest date) --
     seen: dict[str, str] = {}
     for ev in events:
         sym = ev.get("ticker", "")
@@ -393,7 +431,7 @@ def main() -> None:
     unique_events = [{"ticker": s, "date": d} for s, d in sorted(seen.items())]
     print(f"  Unique tickers to fetch: {len(unique_events)}")
 
-    # -- Step 3: fetch, adapt, save --
+    # -- Step 4: fetch, adapt, save --
     saved = 0
     skipped = 0
     failed = 0
@@ -402,6 +440,7 @@ def main() -> None:
         raw_sym = ev["ticker"]
         call_date = ev["date"]
         ticker = _normalize_symbol(raw_sym)
+        year, quarter = _date_to_year_quarter(call_date)
 
         # Skip if already on disk.
         target = DATA_DIR / ticker / f"{call_date}.json"
@@ -416,8 +455,14 @@ def main() -> None:
             n_seg = len(transcript.get("segments", []))
             print(f"  ✓ {ticker:6s} {call_date}  ({n_seg} segments) → {path}")
             saved += 1
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                print(f"  - {ticker} {year}Q{quarter}: no transcript (404), skipping")
+            else:
+                print(f"  ✗ {ticker} {year}Q{quarter}: transcript fetch failed ({exc}), skipping")
+            failed += 1
         except Exception as exc:
-            print(f"  ✗ {ticker:6s} {call_date}  FAILED: {exc}")
+            print(f"  ✗ {ticker} {year}Q{quarter}: transcript fetch failed ({exc}), skipping")
             failed += 1
 
     print(
