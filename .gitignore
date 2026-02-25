@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 data/db.sqlite3
+.DS_Store
+fmp/node_modules/
+fmp/.fmp-symbol-cache.json

@@ -407,6 +407,8 @@ def main() -> None:
     # -- Step 1: earnings calendar --
     events = fetch_earnings_calendar(from_date, to_date)
     print(f"  API Ninjas returned {len(events)} earnings event(s).")
+    for ev in events[:5]:
+        print("  DEBUG EVENT:", ev)
 
     if not events:
         print("  Nothing to process.")
